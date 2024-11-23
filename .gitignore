@@ -1,3 +1,13 @@
+*.cfg
+*.ini
+*.key
+*.log
+*.csv
+*.xls*
+*.doc*
+*.ppt*
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

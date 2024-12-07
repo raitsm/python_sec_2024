@@ -1,3 +1,4 @@
+import pandas as pd
 # Assignment 4
 
 # Demonstrate use of all types of loops in Python:
@@ -60,6 +61,10 @@ system_b_users = [
 
 all_systems_users = [system_a_users, system_b_users]
 
+sys_a_df = pd.DataFrame(system_a_users)
+sys_b_df = pd.DataFrame(system_b_users)
+sys_a_df.to_csv("./system_a_users.csv",encoding="utf-8", index=False)
+sys_b_df.to_csv("./system_b_users.csv",encoding="utf-8", index=False)
 
 def find_common_users(system_a, system_b):
 
@@ -140,5 +145,6 @@ def main():
     pwd_soon_expires = get_early_password_warnings(system_userlist=system_a_users, days_before=expiration_warning_days)
     print(f"Users in System A whose password will expire in less than {expiration_warning_days} days:")
     print(pwd_soon_expires)
+    
     
 main()

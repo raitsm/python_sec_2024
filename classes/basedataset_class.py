@@ -20,14 +20,18 @@ class BaseDataset:
     DEFAULT_DATA_TYPE = "str"
     DEFAULT_QUOTING = csv.QUOTE_ALL
     
+    # constants for common column labels
     LOAD_DATE_COL = "Load_Date"
+    UNIX_TIMESTAMP_SEC = "Unix_Timestamp_Secs"
+    
+    DEFAULT_DATE_FORMAT = "%Y-%m-%d"
     
     # default columns with default values that shall be added once data is loaded.
     DEFAULT_COLUMNS = {
         LOAD_DATE_COL: UNKNOWN,
     }
     
-    def __init__(self, dataset_config: 'DatasetConfig'):
+    def __init__(self, dataset_config: 'DatasetConfig', type="csv"):
         """
         Initialize a dataset using dataset configuration.
         Assumes the source is a csv file.
@@ -39,10 +43,22 @@ class BaseDataset:
         """
         
         self.dataset_config = dataset_config
-        self.df = self.from_csv(self.dataset_config.get_input_path())
+        
+        if self.dataset_config.data_input_format.lower() == "csv":
+            self.df = self.from_csv(self.dataset_config.get_input_path())
+        elif self.dataset_config.data_input_format.lower() == "opensshlog":
+            raise ValueError(f"something off in dataframe '{self.dataset_config.get_id()}' - parent class init shall not be used with openssh.")
+        else:
+            raise ValueError(f"unknown input file type specified")
+        
         self.validate_mandatory_fields()
-
     
+    
+    def parse_log(self):
+        """
+        The method shall be used only for basedataset child clases to import data from sources using a specific format, e.g., from a logfile.
+        """
+        raise 
     
     def from_csv(self, filepath, **kwargs):
         # creates a BaseDataset from a csv file; uses class values
@@ -72,7 +88,7 @@ class BaseDataset:
         return dataframe
 
 
-    def save_as_csv(self, filepath, **kwargs):
+    def save_as_csv(self, filepath=None, **kwargs):
        
         """
         Save the dataframe to a CSV file.
@@ -81,6 +97,8 @@ class BaseDataset:
         Args:
             file_path (_type_): _description_
         """
+        if filepath is None:
+            filepath = self.dataset_config.data_output_path
 
         # If the file already exists, ensure it's a file
         if os.path.exists(filepath) and not os.path.isfile(filepath):
@@ -143,6 +161,62 @@ class BaseDataset:
         self.df[date_col] = current_date
 
 
+    def add_timestamps(self, input_col, output_col, datetime_format=None, default_year=1970):
+        """
+        adds a column (output_col) containing Unix timestamps derived from the text values in input column (input_col).
+        uses datetime format set for the class, which can be overriden using datetime_format variable.
+        
+        Args:
+            input_column (str): Name of the column containing datetime strings.
+            output_column (str): Name of the new column to store timestamps (epoch time).
+            datetime_format (str, optional): The format to use for parsing datetime strings.
+                                             Overrides class-level time_format if provided.
+            default_year (int, optional): Default year to assign to parsed dates if year is missing in the data.
+                                        Use only if you need to put the data within a specific year.
+                                        and note that your data may not cross over the change of the year.
+            
+        Caveat! If the data source lacks year, and the data crosses the turn of the year (eg, data starts in December, and ends in January next year),
+        records from January will be treated as if they were created before December.
+        And it may indeed be the case, e.g., if the data source provides the more recent records first.
+        Also, the sort order of records in the input data may not even be sorted in any chronological order. 
+        Hence, go proactive and request your sources to provide complete dates for their records. :)
+         
+        """
+        
+        UNIX_EPOCH_START = "1970-01-01"         # start of Unix epoch, a reference date to calculate unix timestamps.
+        
+        if input_col not in self.df:
+            raise ValueError(f"Input column '{input_col}' not found in dataset '{self.get_id()}'.")
+
+        # if date time format is specified, override the default.
+        datetime_format_to_use = datetime_format if datetime_format else self.DEFAULT_DATE_FORMAT
+
+        # set a flag to see if the date time format contains a year
+        # sometimes the input data may lack it - then we'll use some sort of default year (default_year parameter)
+        contains_year = '%Y' in datetime_format_to_use or '%y' in datetime_format_to_use
+
+        # convert from string into pandas datetime format.
+        datetimes = pd.to_datetime(self.df[input_col], format=datetime_format_to_use, errors='coerce')
+
+        # if input data contains no year, use default year. NB, use with caution!
+        # if not contains_year:
+        #     default_year_start = (pd.Timestamp(f"{default_year}-01-01") - pd.Timestamp(UNIX_EPOCH_START)) // pd.Timedelta(seconds=1)
+        #     timestamps += default_year_start
+
+        if not contains_year:
+            # Shift the year vectorized for all rows where the year is 1900
+            datetimes = datetimes + pd.offsets.DateOffset(years=default_year - 1900)    # 1900 is the default year pandas uses.
+
+        # print(datetimes.head(10))
+        timestamps = (datetimes - pd.Timestamp(UNIX_EPOCH_START)) // pd.Timedelta(seconds=1)
+
+
+        # convert to unix timestamp.
+        self.df[output_col] = timestamps
+
+
+
+
     def search(self, search_pattern, return_col):
         """
         Args:
@@ -183,6 +257,23 @@ class BaseDataset:
     def get_id(self):
         # returns dataset id as set in dataset config.
         return self.dataset_config.get_id()
+
+
+    def data_cleanup(self):
+        """
+        entry point for data cleanup, must be implemented through child classes.
+        
+        """
+        raise NotImplementedError("Cannot be used with BaseDataset class - pls implement the method through a child class.")
+
+
+
+    def calculate_features(self):
+        """
+        entry point for feature engineering, must be implemented through child classes.
+        
+        """
+        raise NotImplementedError("Cannot be used with BaseDataset class - pls implement the method through a child class.")
     
     
 class DatasetConfig:
@@ -192,9 +283,9 @@ class DatasetConfig:
         
         self.dataset_id = dataset_id
         self.data_input_path = data_input_path
-        self.data_input_type = data_input_type
+        self.data_input_format = data_input_type
         self.data_output_path = data_output_path
-        self.data_output_type = data_output_type
+        self.data_output_format = data_output_type
         self.mandatory_fields = mandatory_fields
         pass
     

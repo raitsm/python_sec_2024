@@ -1,11 +1,23 @@
-# Basedataset child classs to load OpenSSH logs
+# classes/opensshlog_class.py
+
+# Basedataset child classs to load and process OpenSSH logs
 import re
 from datetime import datetime
 import pandas as pd
+import threading
+
+from classes.logger import Logger
+logger = Logger().get_logger()
+
+from classes.task_manager import TaskManager
+# task_mgr = TaskManager()
+task_mgr = TaskManager.get_taskmgr(max_threads=2)
+
 
 from classes.basedataset_class import BaseDataset, DatasetConfig
 from constants import *
 from constants_openssh import *
+from decorators import requires_loaded_data, log_method_call
 
 class OpenSSHLogonData(BaseDataset):
 
@@ -166,38 +178,83 @@ class OpenSSHLogonData(BaseDataset):
         "Too Many Authentication Failures", "Repeated PAM Authentication Failures",
         "Repeated Password Failure",
     ]
+    
+    TRUSTED_NETWORKS = [
+        "137.189.204", "137.189.205", "137.189.206", "137.189.207",
+        "137.189.240","137.189.241", "137.189.88", "137.189.89",
+        "119.137.60", "119.137.62", "119.137.63",
+    ]
+    
+    
+    # risk score modifiers
+    INSIDER_BRUTEFORCE_ATTEMPT = 60
+    SUCCESSFUL_BRUTEFORCE = 150
          
     # various column labels
     BASE_RISK_SCORE_COL = "base_risk_score"
     ADJUSTED_RISK_SCORE_COL = "adjusted_risk_score"
+    SUCCESSFFUL_LOGIN_FLAG = "Successful_Login_Flag"            # 1 if the login was successful, 0 otherwise
+    BRUTEFORCE_FLAG = "Suspect_Bruteforce_Flag"                 # 1 if the event type is one that indicates a (suspected) bruteforce attack, 0 otherwise
+    TRUSTED_NETWORK_FLAG = "Trusted_Network_Flag"               # 1 if the source address comes from what is defined as a trusted network, 0 otherwise
+    INSIDER_BRUTEFORCE_FLAG = "Insider_Bruteforce_Flag"         # 1 if a suspected bruteforce from a trusted network, 0 otherwise
     
+
     def __init__(self, dataset_config: 'DatasetConfig'):
         """
-        overrides BaseDataset __init__ method and uses own loader to parse SSH logfile into a pandas dataframe
-
+        Initialize the OpenSSHLogonData class.
+        Calls the parent constructor for shared attributes and configuration.
         """
-        self.dataset_config = dataset_config
-        if self.dataset_config.data_input_format not in self.SUPPORTED_DATA_FORMATS:
-            raise ValueError(f"Dataset '{self.dataset_config.get_id()}' attempted to use a data input format {self.dataset_config.data_input_format} unsuitable for OpenSSH log parsing.")
-        self.df = self.load()  # Load the dataset using the "other" type
-        self.validate_mandatory_fields()
+        super().__init__(dataset_config=dataset_config)
 
 
-    def load(self):
+    @log_method_call
+    def load_data(self, use_taskmgr=False):
         """
-        Just a wrapper to call the logfile parser class method.
-        returns a dataframe with parsed logfile data.
+        Custom data loading for OpenSSH log data.
+        Validates the input file and parses the log into a DataFrame.
+        
+        Args:
+            use_task_mgr (bool): whether to execute in a separate thread using task manager, default is False
         """
-        return self.parse_log(self.dataset_config.data_input_path)
+        # Validate the input file path
+        def load_operation():
+            with self.lock:
+                self.validate_input_file(self.dataset_config.get_input_path())
+
+                # Ensure the data format is supported
+                if self.dataset_config.data_input_format.lower() not in self.SUPPORTED_DATA_FORMATS:
+                    raise ValueError(
+                        f"Dataset '{self.dataset_config.get_id()}' attempted to load an unsupported format "
+                        f"'{self.dataset_config.data_input_format}'. Supported formats: {self.SUPPORTED_DATA_FORMATS}"
+                    )
+
+                # Custom parsing logic for OpenSSH logs
+                self.df = self.parse_log(self.dataset_config.get_input_path())
+
+                # Validate mandatory fields after loading
+                self.validate_mandatory_fields()
+                # print(f"OpenSSH log data loaded successfully for dataset '{self.dataset_config.get_id()}'.")
+                logger.info(f"Dataset '{self.dataset_config.get_id()}' loaded successfully from '{self.dataset_config.get_input_path()}' in thread {threading.current_thread().name}.")
+
+        if use_taskmgr:
+            task_mgr.submit(load_operation)  # Asynchronous execution
+        else:
+            load_operation()  # Synchronous execution
+
+
+    def validate_mandatory_fields(self):
+        """
+        validate that mandatory fields are present using BaseDataset method.
+        """
+        super().validate_mandatory_fields()
+
 
     @classmethod
     def parse_log(cls, path_to_logfile):
         """
-        A custom function for loading.
-        Parses OpenSSH log file into a Pandas dataframe
+        parses OpenSSH log file into a Pandas df
 
-        Returns:
-            Pandas dataframe with parsed log entries; for each log entry the regexp pattern used is specified.
+        returns: Pandas df with parsed log entries; for each log entry the regexp pattern used is specified.
 
         """
         
@@ -207,24 +264,21 @@ class OpenSSHLogonData(BaseDataset):
                 log_entry = log_entry.strip()                       # b/c otherwise the entries will include line breaks and output csv will look like a mess.
                 parsed_log_entry = cls.parse_log_entry(log_entry)
                 if parsed_log_entry:
-                    parsed_log_entries.append(parsed_log_entry)
-
-        # Create a DataFrame from the parsed log entries
-      
+                    parsed_log_entries.append(parsed_log_entry)      
         return pd.DataFrame(parsed_log_entries)
     
 
     @classmethod
     def detect_pattern(cls, line):
         """
-        Detect the pattern used for a log line.
-        Returns the pattern name and match object if found, else None.
+        matches the patterns from PARSING_PATTERNS with logfile entry.
+        Returns the pattern name from PARSING_PATTERNS and match object if found, else None.
 
         """
         for name, pattern in cls.PARSING_PATTERNS.items():
             match = re.match(pattern, line)
             if match:
-                return name, match
+                return name, match  # return pattern name & match object
         return UNKNOWN, None    # if there is no match, the pattern is unknown.
 
 
@@ -236,44 +290,80 @@ class OpenSSHLogonData(BaseDataset):
         always includes also raw log entry
         based on different patterns, different fields will be returned; if a pattern does not contain a specific field,
         it will have a None/NaN value.
+        returns: dictionary based on the detected pattern.
         """
-        pattern_name, match = cls.detect_pattern(log_entry)
+        pattern_name, match = cls.detect_pattern(log_entry) # do pattern detection and data extraction into a regexp match object if pattern is detected.
         if match:
-            parsed_data = match.groupdict()
+            parsed_data = match.groupdict() # this is the magic where the named groups are extracted from a match into a dictionary
             parsed_data[OSSH_EVENT_PATTERN] = pattern_name  # Add the pattern name to the output
-            parsed_data[OSSH_RAW] = log_entry
+            parsed_data[OSSH_RAW] = log_entry   # add the raw log entry
             return parsed_data
         return {OSSH_EVENT_PATTERN: UNKNOWN, OSSH_RAW: log_entry}  # Include raw line for unmatched cases
 
 
+    @requires_loaded_data
     def data_cleanup(self):
         """
         clean up erroneous and unnecessary data, process blank values, bring the datetime formats to a common standard.
         """
+        # if not self.is_loaded:  
+        #     raise ValueError(f"Data not loaded into '{self.dataset_config.get_id()}' .")
+        
         print("no data cleanup required this time!")
         pass
 
 
+    @log_method_call
+    @requires_loaded_data
     def calculate_features(self):
         """
         a collection of calls to methods that update self.df by adding new features (counts, encoded values, risk scores)
         """
+
+        # if not self.is_loaded:  
+        #     raise ValueError(f"Data not loaded into '{self.dataset_config.get_id()}' .")
+
 
         self.add_load_date()
         
         # set base risk score according to the event types
         self.calc_entry_base_score(risk_score_col=self.BASE_RISK_SCORE_COL,event_type_col=OSSH_EVENT_PATTERN)
         self.add_timestamps(input_col=OSSH_TSTAMP, output_col=self.UNIX_TIMESTAMP_SEC)
+        
+        # do some feature encoding -> from strings to integers
+        # set flags for successful logins and for bruteforce events - to make filtering and counting easier & faster
+        self.df[self.SUCCESSFFUL_LOGIN_FLAG] = self.df[OSSH_EVENT_PATTERN].isin(self.SUCCESSFUL_LOGIN_EVTS).astype(int)
+        self.df[self.BRUTEFORCE_FLAG] = self.df[OSSH_EVENT_PATTERN].isin(self.BRUTEFORCE_EVTS).astype(int)
+        
+        # flag event where source ip is from a trusted network
+        self.df[self.TRUSTED_NETWORK_FLAG] = self.df[OSSH_SRC_IP].str.startswith(tuple(self.TRUSTED_NETWORKS), na=False).astype(int)
+
+        # identify events related to suspected bruteforce from a trusted network (there should not be any)
+        self.df[self.INSIDER_BRUTEFORCE_FLAG] = ((self.df[self.BRUTEFORCE_FLAG] == 1) & (self.df[self.TRUSTED_NETWORK_FLAG] == 1)).astype(int)
+  
+       
         self.df = self.df.sort_values(by=self.UNIX_TIMESTAMP_SEC, ascending=True).reset_index(drop=True)
 
+        # in future, this should support further transparency, showing original risk score for an entry next to "adjusted risk score"
+        # which is achieved based on advanced methods like password_bruteforcing_events()
         self.initialize_adjusted_risk_score(base_risk_score_col=self.BASE_RISK_SCORE_COL, adjusted_score_col=self.ADJUSTED_RISK_SCORE_COL)
+
+
+        # any updates of adjusted risk score must only come after the adjusted risk score has been initialized.
+
+        # if a bruteforce attack is coming from a trusted network, increase adjusted risk score.
+        # self.df.loc[(self.df[self.BRUTEFORCE_FLAG] == 1) & (self.df[self.TRUSTED_NETWORK_FLAG] == 1), self.ADJUSTED_RISK_SCORE_COL] += self.INSIDER_BRUTEFORCE_ATTEMPT
+        self.df.loc[self.df[self.INSIDER_BRUTEFORCE_FLAG] == 1, self.ADJUSTED_RISK_SCORE_COL] += self.INSIDER_BRUTEFORCE_ATTEMPT
 
         # check for likely successful bruteforce attempts.
         self.password_bruteforcing_events(event_timestamp_col=self.UNIX_TIMESTAMP_SEC, event_type_col=OSSH_EVENT_PATTERN,
                                           adjusted_score_col=self.ADJUSTED_RISK_SCORE_COL, lookup_key_col=USERID_FIELD,
-                                          time_period_secs=600)
+                                          time_period_secs=600, success_score=self.SUCCESSFUL_BRUTEFORCE)
 
 
+
+
+    @requires_loaded_data
     def calc_entry_base_score(self, risk_score_col, event_type_col):
         """
         adds base score for each log entry based on event type to risk score mapping in BASE_RISK_SCORES.
@@ -284,6 +374,7 @@ class OpenSSHLogonData(BaseDataset):
         self.df[risk_score_col] = self.df[event_type_col].map(self.BASE_RISK_SCORE_MAP)       
         return
 
+    @requires_loaded_data
     def initialize_adjusted_risk_score(self, base_risk_score_col, adjusted_score_col):
         """
         initializes adjusted score column with values from base score column.
@@ -296,7 +387,7 @@ class OpenSSHLogonData(BaseDataset):
         """
         self.df[adjusted_score_col] = self.df[base_risk_score_col]
 
-
+    @requires_loaded_data
     def password_bruteforcing_events(self, event_type_col, event_timestamp_col, adjusted_score_col, lookup_key_col, time_period_secs=600, success_score=90):
         """
         validates if successful logins might be related to bruteforce attacks preceeding the login.
@@ -310,14 +401,21 @@ class OpenSSHLogonData(BaseDataset):
             time_period_secs (int): time period in seconds relative to a successful login events to look back for brute force attacks
             success_score (int): penalty to add to successful logins related to bruteforce attacks
             
-        NB, this has a potential for generalization, and could be used in parameter-driven processing.    
+        NB, this has a potential for generalization, and could be used in parameter-driven processing.
+        
+        algorithm:
+        create a temporary dataframe with all successful login events and a temporary dataframe with likely bruteforce events
+        merge both together with an inner join using user id as a key: the merged df will contain success+bruteforce pairs (row number num_success * num_bruteforce)
+        analyse each pair if success and bruteforce occurs within the defined time
+        keep original index values for rows where success and bruteforce occur close enough
+        update these rows with extra risk score   
         """
-        SUCCESSFUL_LOGIN_EVTS = ["Successful Login", "PAM Session Opened"]
-        BRUTEFORCE_EVTS = ["Too Many Authentication Failures", "Repeated PAM Authentication Failures", "Repeated Password Failure"]
+        # SUCCESSFUL_LOGIN_EVTS = ["Successful Login", "PAM Session Opened"]
+        # BRUTEFORCE_EVTS = ["Too Many Authentication Failures", "Repeated PAM Authentication Failures", "Repeated Password Failure"]
 
         # filter out successful logins as well as likely brute force events
-        successful_logins = self.df[self.df[event_type_col].isin(SUCCESSFUL_LOGIN_EVTS)]
-        brute_force_events = self.df[self.df[event_type_col].isin(BRUTEFORCE_EVTS)]
+        successful_logins = self.df[self.df[event_type_col].isin(self.SUCCESSFUL_LOGIN_EVTS)]
+        brute_force_events = self.df[self.df[event_type_col].isin(self.BRUTEFORCE_EVTS)]
 
         # Perform a self-join on username
         merged = pd.merge(
@@ -327,7 +425,8 @@ class OpenSSHLogonData(BaseDataset):
             left_on=lookup_key_col,                     # lookup is on the username
             right_on=lookup_key_col,
             suffixes=("_success", "_bruteforce")
-        )
+        )           # rows will be produced only for users who have at least one successful login and at least one bruteforce event recorded on their userid
+        # number of rows per user: number of successful logins * number of bruteforce attempts
 
         # Filter for brute force events within the time period preceding successful logins
         valid_bruteforce = merged[
@@ -337,26 +436,9 @@ class OpenSSHLogonData(BaseDataset):
 
         # Get the original indexes of successful login events to update
         valid_successful_indexes = valid_bruteforce["index_success"].unique()
+        valid_bruteforce_indexes = valid_bruteforce["index_bruteforce"].unique()
 
-        # add success_score value to adjusted scores for successful logins in the original dataframe:
+        # add success_score value to adjusted scores for successful logins in the original dataframe (use the original indexes):
         self.df.loc[valid_successful_indexes, adjusted_score_col] += success_score
+        self.df.loc[valid_bruteforce_indexes, adjusted_score_col] += success_score
 
-
-
-
-    def get_success_after_fail(self, num_failures=3, interval_seconds=15*60 ):
-        """
-        Analyzes OpenSSH log data to identify successful logon events that have been preceeded 
-        with K failed logon attempts within N seconds.
-        
-        num_failures (int): number of consecutive logon failures
-        interval_seconds (int): time interval between first failed attempt and the successful logon attempt
-        
-        """
-        pass
-    
-    def password_fail():
-        pass
-        # failregex = sshd\[.*\]: Failed password for .* from <HOST>
-        
-        

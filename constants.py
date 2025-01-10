@@ -1,3 +1,5 @@
+# project_root/constants.py
+
 # global constants for the projecgt
 UNKNOWN = "*** unknown ***"
 

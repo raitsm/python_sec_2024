@@ -1,3 +1,7 @@
+# project_root/constants_openssh.py
+
+# constants specific for openssh log class
+
 OSSH_TSTAMP = 'ossh_timestamp'
 OSSH_HOST = 'ossh_host'
 OSSH_PROCESS = 'ossh_process'

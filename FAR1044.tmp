@@ -1,0 +1,26 @@
+2025-01-09 22:37:33,400 - INFO - uzdevums_8 - main - Project launch
+2025-01-09 22:37:46,621 - INFO - opensshlog_class - load_operation - Dataset 'OpenSSH sample log' loaded successfully from './data_in/SSH.log' in thread MainThread.
+2025-01-09 22:37:46,627 - INFO - basedataset_class - load_operation - Dataset 'system A users' loaded successfully from './system_a_users.csv' in thread MainThread.
+2025-01-09 22:37:46,630 - INFO - basedataset_class - load_operation - Dataset 'system B users' loaded successfully from './system_b_users.csv' in thread MainThread.
+2025-01-09 22:37:46,631 - INFO - task_manager - wait_for_all - All tasks completed.
+2025-01-09 22:37:59,931 - INFO - basedataset_class - save_operation - Successfully saved dataset 'OpenSSH sample log' to ./SSH_Log_data.csv in thread MainThread.
+2025-01-09 22:37:59,935 - INFO - basedataset_class - save_operation - Successfully saved dataset 'system A users' to ./system_a_users_OUT.csv in thread MainThread.
+2025-01-09 22:37:59,938 - INFO - basedataset_class - save_operation - Successfully saved dataset 'system B users' to ./system_b_users_OUT.csv in thread MainThread.
+2025-01-09 22:37:59,939 - INFO - task_manager - wait_for_all - All tasks completed.
+2025-01-09 22:37:59,939 - INFO - uzdevums_8 - main - all done
+2025-01-09 22:38:56,400 - INFO - uzdevums_8 - main - Project launch
+2025-01-09 22:38:56,616 - INFO - basedataset_class - load_operation - Dataset 'system A users' loaded successfully from './system_a_users.csv' in thread ThreadPoolExecutor-0_1.
+2025-01-09 22:38:56,639 - INFO - task_manager - wait_for_all - [2025-01-09 22:38:56.639325] Task completed with result: None
+2025-01-09 22:38:56,691 - INFO - basedataset_class - load_operation - Dataset 'system B users' loaded successfully from './system_b_users.csv' in thread ThreadPoolExecutor-0_1.
+2025-01-09 22:38:56,693 - INFO - task_manager - wait_for_all - [2025-01-09 22:38:56.693516] Task completed with result: None
+2025-01-09 22:39:09,595 - INFO - opensshlog_class - load_operation - Dataset 'OpenSSH sample log' loaded successfully from './data_in/SSH.log' in thread ThreadPoolExecutor-0_0.
+2025-01-09 22:39:09,596 - INFO - task_manager - wait_for_all - [2025-01-09 22:39:09.596084] Task completed with result: None
+2025-01-09 22:39:09,596 - INFO - task_manager - wait_for_all - All tasks completed.
+2025-01-09 22:39:13,228 - INFO - basedataset_class - save_operation - Successfully saved dataset 'system A users' to ./system_a_users_OUT.csv in thread ThreadPoolExecutor-0_0.
+2025-01-09 22:39:13,230 - INFO - task_manager - wait_for_all - [2025-01-09 22:39:13.230658] Task completed with result: ./system_a_users_OUT.csv
+2025-01-09 22:39:13,236 - INFO - basedataset_class - save_operation - Successfully saved dataset 'system B users' to ./system_b_users_OUT.csv in thread ThreadPoolExecutor-0_0.
+2025-01-09 22:39:13,238 - INFO - task_manager - wait_for_all - [2025-01-09 22:39:13.238052] Task completed with result: ./system_b_users_OUT.csv
+2025-01-09 22:39:21,599 - INFO - basedataset_class - save_operation - Successfully saved dataset 'OpenSSH sample log' to ./SSH_Log_data.csv in thread ThreadPoolExecutor-0_1.
+2025-01-09 22:39:21,599 - INFO - task_manager - wait_for_all - [2025-01-09 22:39:21.599845] Task completed with result: ./SSH_Log_data.csv
+2025-01-09 22:39:21,600 - INFO - task_manager - wait_for_all - All tasks completed.
+2025-01-09 22:39:21,600 - INFO - uzdevums_8 - main - all done
